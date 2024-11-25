@@ -1,4 +1,3 @@
-import os
 import asyncio
 import random
 import ssl
@@ -10,7 +9,6 @@ from websockets_proxy import Proxy, proxy_connect
 from fake_useragent import UserAgent
 
 
-# Heartbeat Manager Class
 class HeartbeatManager:
     def __init__(self, websocket, user_id, device_id, user_agent, idle_timeout=30):
         self.websocket = websocket
@@ -54,13 +52,13 @@ class HeartbeatManager:
 
     async def reconnect(self):
         logger.info("Attempting to reconnect WebSocket...")
-        await asyncio.sleep(5)
+        await asyncio.sleep(5)  # Sleep before attempting reconnection
+        await self.websocket.open  # This should attempt to reopen the WebSocket connection
 
     def reset_activity(self):
         self.last_activity_time = time.time()
 
 
-# WebSocket Connection Logic
 async def connect_to_wss(socks5_proxy, user_id, semaphore):
     user_agent = UserAgent(os=['windows', 'macos', 'linux'], browsers='chrome')
     random_user_agent = user_agent.random
@@ -88,13 +86,12 @@ async def connect_to_wss(socks5_proxy, user_id, semaphore):
 
             except (ConnectionError, TimeoutError) as e:
                 logger.error(f"Connection error with proxy {socks5_proxy}: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(5)  # Retry after a delay
             except Exception as e:
                 logger.error(f"Unexpected error with proxy {socks5_proxy}: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(5)  # Retry after a delay
 
 
-# Message Handling Logic
 async def handle_messages(websocket, heartbeat_manager, device_id, user_id, user_agent):
     while True:
         try:
@@ -129,92 +126,44 @@ async def handle_messages(websocket, heartbeat_manager, device_id, user_id, user
             break
 
 
-# Add New User ID
-def add_user():
+async def load_config():
     try:
-        if os.path.exists("user_id.txt"):
-            with open("user_id.txt", "r") as user_file:
-                user_ids = user_file.read().splitlines()
-        else:
-            user_ids = []
+        with open('user_id.txt', 'r') as f:
+            user_id = f.read().strip()
+        if not user_id:
+            logger.error("No user ID found in 'user_id.txt'.")
+            return None
+        logger.info(f"User ID read from file: {user_id}")
+    except FileNotFoundError:
+        logger.error("Error: 'user_id.txt' file not found.")
+        return None
 
-        new_user_id = input("Enter the new User ID: ").strip()
-        if not new_user_id:
-            print("No User ID entered. Exiting...")
-            return
-
-        user_ids.append(new_user_id)
-        with open("user_id.txt", "w") as user_file:
-            user_file.write("\n".join(user_ids))
-
-        proxy_file_name = f"proxy{len(user_ids)}.txt"
-        with open(proxy_file_name, "w") as proxy_file:
-            pass
-
-        print(f"User ID '{new_user_id}' added successfully.")
-        print(f"Created an empty proxy file: {proxy_file_name}")
-        print("Please add proxies to the file manually and restart the script.")
-        print("Exiting...")
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-
-
-# Start the Script
-async def start_script():
-    print("Starting the main script...")
     try:
-        with open("user_id.txt", "r") as user_file:
-            user_ids = user_file.read().splitlines()
-
-        proxies = []
-        for i, user_id in enumerate(user_ids, start=1):
-            proxy_file = f"proxy{i}.txt"
-            if os.path.exists(proxy_file):
-                with open(proxy_file, "r") as proxy_file_content:
-                    proxy_list = proxy_file_content.read().splitlines()
-                    if proxy_list:
-                        proxies.append((user_id, proxy_list))
-                    else:
-                        print(f"Warning: '{proxy_file}' is empty. Skipping...")
-            else:
-                print(f"Warning: Proxy file '{proxy_file}' for User ID '{user_id}' not found. Skipping...")
-
+        with open('local_proxies.txt', 'r') as file:
+            proxies = file.read().splitlines()
         if not proxies:
-            print("No valid proxies or user IDs found. Exiting...")
-            return
+            logger.error("No proxies found in 'local_proxies.txt'.")
+            return None
+        logger.info(f"Loaded {len(proxies)} proxies.")
+        return user_id, proxies
+    except FileNotFoundError:
+        logger.error("Error: 'local_proxies.txt' file not found.")
+        return None
 
-    except FileNotFoundError as e:
-        print(f"Error loading configuration: {e}")
+
+async def main():
+    config = await load_config()
+    if not config:
         return
 
+    user_id, local_proxies = config
     max_connections = 500
     semaphore = asyncio.Semaphore(max_connections)
 
-    print(f"Loaded {len(proxies)} user-proxy pairs. Starting connections...")
-    tasks = [
-        asyncio.create_task(connect_to_wss(proxy, user_id, semaphore))
-        for user_id, proxy_list in proxies
-        for proxy in proxy_list
-    ]
-
+    logger.info(f"Starting with {max_connections} concurrent proxy connections.")
+    tasks = [asyncio.create_task(connect_to_wss(proxy, user_id, semaphore)) for proxy in local_proxies]
     await asyncio.gather(*tasks)
 
 
-# Main Menu
-def main_menu():
-    print("Main Menu:")
-    print("1. Add a new user ID and create proxy file")
-    print("2. Start the script with existing configurations")
-    option = input("Select an option (1/2): ").strip()
-
-    if option == "1":
-        add_user()
-    elif option == "2":
-        asyncio.run(start_script())
-    else:
-        print("Invalid option. Exiting...")
-
-
-if __name__ == "__main__":
-    main_menu()
+if __name__ == '__main__':
+    asyncio.run(main())
