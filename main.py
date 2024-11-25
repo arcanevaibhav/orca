@@ -4,10 +4,53 @@ import ssl
 import json
 import time
 import uuid
+import os
 from loguru import logger
 from websockets_proxy import Proxy, proxy_connect
 from fake_useragent import UserAgent
 
+# === Utility Functions ===
+
+def display_menu():
+    print("\nMain Menu:")
+    print("1. Add a new user ID and proxies")
+    print("2. Start the script with existing configurations")
+    choice = input("Select an option (1/2): ")
+    return choice
+
+def add_new_user():
+    user_id = input("Enter the new User ID: ").strip()
+    if not user_id:
+        print("User ID cannot be empty.")
+        return
+
+    try:
+        with open("user_id.txt", "a") as user_file:
+            user_file.write(f"{user_id}\n")
+        print(f"User ID '{user_id}' added successfully.")
+
+        proxy_file_name = f"proxy{sum(1 for _ in open('user_id.txt'))}.txt"
+        print(f"Creating proxy file: {proxy_file_name}")
+
+        proxies = []
+        print("Enter proxies one by one (leave blank and press Enter to stop):")
+        while True:
+            proxy = input("Enter proxy (format: socks5://user:pass@host:port): ").strip()
+            if not proxy:
+                break
+            proxies.append(proxy)
+
+        if proxies:
+            with open(proxy_file_name, "w") as proxy_file:
+                proxy_file.write("\n".join(proxies))
+            print(f"{len(proxies)} proxies saved to '{proxy_file_name}'.")
+        else:
+            print(f"No proxies entered. '{proxy_file_name}' will remain empty.")
+
+    except Exception as e:
+        print(f"Error adding new user: {e}")
+
+# === Main Script ===
 
 class HeartbeatManager:
     def __init__(self, websocket, user_id, device_id, user_agent, idle_timeout=30):
@@ -45,15 +88,8 @@ class HeartbeatManager:
                 self.last_activity_time = time.time()
             else:
                 logger.warning("WebSocket is closed. Attempting to reconnect.")
-                await self.reconnect()
         except Exception as e:
             logger.error(f"Error sending heartbeat: {e}")
-            await self.reconnect()
-
-    async def reconnect(self):
-        logger.info("Attempting to reconnect WebSocket...")
-        await asyncio.sleep(5)  # Sleep before attempting reconnection
-        await self.websocket.open  # This should attempt to reopen the WebSocket connection
 
     def reset_activity(self):
         self.last_activity_time = time.time()
@@ -100,70 +136,53 @@ async def handle_messages(websocket, heartbeat_manager, device_id, user_id, user
             logger.info(f"Received message: {message}")
             heartbeat_manager.reset_activity()
 
-            if message.get("action") == "AUTH":
-                auth_response = {
-                    "id": message["id"],
-                    "origin_action": "AUTH",
-                    "result": {
-                        "browser_id": device_id,
-                        "user_id": user_id,
-                        "user_agent": user_agent,
-                        "timestamp": int(time.time()),
-                        "device_type": "desktop",
-                        "version": "4.28.2",
-                    }
-                }
-                logger.debug(f"Sending auth response: {auth_response}")
-                await websocket.send(json.dumps(auth_response))
-
-            elif message.get("action") == "PONG":
-                pong_response = {"id": message["id"], "origin_action": "PONG"}
-                logger.debug(f"Sending pong response: {pong_response}")
-                await websocket.send(json.dumps(pong_response))
-
         except Exception as e:
             logger.error(f"Error handling message: {e}")
             break
 
 
-async def load_config():
-    try:
-        with open('user_id.txt', 'r') as f:
-            user_id = f.read().strip()
-        if not user_id:
-            logger.error("No user ID found in 'user_id.txt'.")
-            return None
-        logger.info(f"User ID read from file: {user_id}")
-    except FileNotFoundError:
-        logger.error("Error: 'user_id.txt' file not found.")
-        return None
-
-    try:
-        with open('local_proxies.txt', 'r') as file:
-            proxies = file.read().splitlines()
-        if not proxies:
-            logger.error("No proxies found in 'local_proxies.txt'.")
-            return None
-        logger.info(f"Loaded {len(proxies)} proxies.")
-        return user_id, proxies
-    except FileNotFoundError:
-        logger.error("Error: 'local_proxies.txt' file not found.")
-        return None
-
-
 async def main():
-    config = await load_config()
-    if not config:
+    while True:
+        choice = display_menu()
+        if choice == "1":
+            add_new_user()
+        elif choice == "2":
+            break
+        else:
+            print("Invalid choice. Please select 1 or 2.")
+
+    # Start with existing user configurations
+    user_ids = []
+    proxies = {}
+    try:
+        with open("user_id.txt", "r") as f:
+            user_ids = [line.strip() for line in f if line.strip()]
+
+        for index, user_id in enumerate(user_ids):
+            proxy_file = f"proxy{index + 1}.txt"
+            try:
+                with open(proxy_file, "r") as proxy_f:
+                    proxies[user_id] = [line.strip() for line in proxy_f if line.strip()]
+            except FileNotFoundError:
+                logger.warning(f"Proxy file '{proxy_file}' not found. Skipping user '{user_id}'.")
+
+    except FileNotFoundError:
+        logger.error("File 'user_id.txt' not found. Please add users first.")
         return
 
-    user_id, local_proxies = config
     max_connections = 500
     semaphore = asyncio.Semaphore(max_connections)
+    tasks = []
 
-    logger.info(f"Starting with {max_connections} concurrent proxy connections.")
-    tasks = [asyncio.create_task(connect_to_wss(proxy, user_id, semaphore)) for proxy in local_proxies]
-    await asyncio.gather(*tasks)
+    for user_id, user_proxies in proxies.items():
+        for proxy in user_proxies:
+            tasks.append(asyncio.create_task(connect_to_wss(proxy, user_id, semaphore)))
+
+    if tasks:
+        await asyncio.gather(*tasks)
+    else:
+        logger.error("No tasks to run. Exiting.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
