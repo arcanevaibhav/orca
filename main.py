@@ -45,15 +45,8 @@ class HeartbeatManager:
                 self.last_activity_time = time.time()
             else:
                 logger.warning("WebSocket is closed. Attempting to reconnect.")
-                await self.reconnect()
         except Exception as e:
             logger.error(f"Error sending heartbeat: {e}")
-            await self.reconnect()
-
-    async def reconnect(self):
-        logger.info("Attempting to reconnect WebSocket...")
-        await asyncio.sleep(5)  # Sleep before attempting reconnection
-        await self.websocket.open  # This should attempt to reopen the WebSocket connection
 
     def reset_activity(self):
         self.last_activity_time = time.time()
@@ -126,43 +119,55 @@ async def handle_messages(websocket, heartbeat_manager, device_id, user_id, user
             break
 
 
-async def load_config():
+async def load_user_data():
     try:
         with open('user_id.txt', 'r') as f:
-            user_id = f.read().strip()
-        if not user_id:
-            logger.error("No user ID found in 'user_id.txt'.")
+            user_ids = f.read().splitlines()
+        if not user_ids:
+            logger.error("No user IDs found in 'user_id.txt'.")
             return None
-        logger.info(f"User ID read from file: {user_id}")
+        logger.info(f"Loaded {len(user_ids)} user IDs.")
+        return user_ids
     except FileNotFoundError:
         logger.error("Error: 'user_id.txt' file not found.")
         return None
 
+
+async def load_proxies_for_user(index):
+    proxy_file = f'proxy{index + 1}.txt'
     try:
-        with open('local_proxies.txt', 'r') as file:
+        with open(proxy_file, 'r') as file:
             proxies = file.read().splitlines()
         if not proxies:
-            logger.error("No proxies found in 'local_proxies.txt'.")
+            logger.warning(f"No proxies found in '{proxy_file}'. Skipping this user.")
             return None
-        logger.info(f"Loaded {len(proxies)} proxies.")
-        return user_id, proxies
+        logger.info(f"Loaded {len(proxies)} proxies from '{proxy_file}'.")
+        return proxies
     except FileNotFoundError:
-        logger.error("Error: 'local_proxies.txt' file not found.")
+        logger.warning(f"Proxy file '{proxy_file}' not found. Skipping this user.")
         return None
 
 
 async def main():
-    config = await load_config()
-    if not config:
+    user_ids = await load_user_data()
+    if not user_ids:
         return
 
-    user_id, local_proxies = config
     max_connections = 500
     semaphore = asyncio.Semaphore(max_connections)
+    tasks = []
 
-    logger.info(f"Starting with {max_connections} concurrent proxy connections.")
-    tasks = [asyncio.create_task(connect_to_wss(proxy, user_id, semaphore)) for proxy in local_proxies]
-    await asyncio.gather(*tasks)
+    for index, user_id in enumerate(user_ids):
+        proxies = await load_proxies_for_user(index)
+        if not proxies:
+            continue
+        for proxy in proxies:
+            tasks.append(asyncio.create_task(connect_to_wss(proxy, user_id, semaphore)))
+
+    if tasks:
+        await asyncio.gather(*tasks)
+    else:
+        logger.error("No tasks to run. Exiting.")
 
 
 if __name__ == '__main__':
