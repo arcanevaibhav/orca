@@ -122,32 +122,26 @@ async def handle_messages(websocket, heartbeat_manager, device_id, user_id, user
 
 
 async def load_user_data():
-    try:
-        with open("user_id.txt", "r") as file:
-            user_ids = [line.strip() for line in file if line.strip()]
-        if not user_ids:
-            logger.error("No user IDs found.")
-            return []
-        logger.info(f"Loaded {len(user_ids)} user IDs.")
-        return user_ids
-    except FileNotFoundError:
-        logger.error("user_id.txt file not found.")
+    if not os.path.exists("user_id.txt"):
+        logger.error("File 'user_id.txt' is missing. Please add it and try again.")
         return []
+    with open("user_id.txt", "r") as file:
+        user_ids = [line.strip() for line in file if line.strip()]
+    if not user_ids:
+        logger.error("No valid user IDs found in 'user_id.txt'.")
+    return user_ids
 
 
 async def load_proxies_for_user(index):
     proxy_file = f"proxy{index + 1}.txt"
-    try:
-        with open(proxy_file, "r") as file:
-            proxies = [line.strip() for line in file if line.strip()]
-        if not proxies:
-            logger.warning(f"No proxies found in {proxy_file}.")
-            return []
-        logger.info(f"Loaded {len(proxies)} proxies from {proxy_file}.")
-        return proxies
-    except FileNotFoundError:
-        logger.warning(f"Proxy file {proxy_file} not found.")
+    if not os.path.exists(proxy_file):
+        logger.warning(f"Proxy file '{proxy_file}' is missing. Skipping.")
         return []
+    with open(proxy_file, "r") as file:
+        proxies = [line.strip() for line in file if line.strip()]
+    if not proxies:
+        logger.warning(f"No proxies found in '{proxy_file}'.")
+    return proxies
 
 
 async def main():
@@ -175,8 +169,8 @@ async def main():
 
 if __name__ == "__main__":
     logger.remove()
-    logger.add("app.log", rotation="10 MB", level="INFO", format="{time} {level} {message}")
+    logger.add("app.log", rotation="10 MB", level="DEBUG", format="{time} {level} {message}")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Process interrupted by user. Exiting gracefully.")
+        logger.info("Process interrupted. Exiting gracefully.")
