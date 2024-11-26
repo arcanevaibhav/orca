@@ -58,6 +58,8 @@ async def connect_to_wss(proxy_url, user_id, semaphore):
     random_user_agent = user_agent.random
     device_id = str(uuid.uuid3(uuid.NAMESPACE_DNS, proxy_url))
 
+    logger.info(f"Starting connection process for user {user_id} using proxy {proxy_url}")
+
     async with semaphore:
         while True:
             try:
@@ -78,7 +80,7 @@ async def connect_to_wss(proxy_url, user_id, semaphore):
                     asyncio.create_task(heartbeat_manager.start_heartbeat())
                     await handle_messages(websocket, heartbeat_manager, device_id, user_id, random_user_agent)
             except (asyncio.TimeoutError, ConnectionError) as e:
-                logger.warning(f"Connection error with proxy {proxy_url}: {e}. Retrying...")
+                logger.warning(f"Connection error with proxy {proxy_url} for user {user_id}: {e}. Retrying...")
                 await asyncio.sleep(5)
             except Exception as e:
                 logger.error(f"Unexpected error: {e}. Retrying...")
@@ -127,6 +129,7 @@ async def load_user_data():
         return []
     with open("user_id.txt", "r") as file:
         user_ids = [line.strip() for line in file if line.strip()]
+    logger.info(f"Loaded user IDs: {user_ids}")
     if not user_ids:
         logger.error("No valid user IDs found in 'user_id.txt'.")
     return user_ids
@@ -139,13 +142,14 @@ async def load_proxies_for_user(index):
         return []
     with open(proxy_file, "r") as file:
         proxies = [line.strip() for line in file if line.strip()]
+    logger.info(f"Proxies loaded for user {index + 1}: {proxies}")
     if not proxies:
         logger.warning(f"No proxies found in '{proxy_file}'.")
     return proxies
 
 
 async def main():
-    max_connections = 100  # Set max workers to 100 explicitly
+    max_connections = int(os.getenv("MAX_CONNECTIONS", 100))
     semaphore = asyncio.Semaphore(max_connections)
     tasks = []
 
@@ -158,10 +162,13 @@ async def main():
         if not proxies:
             continue
         for proxy in proxies:
+            logger.info(f"Creating task for user {user_id} with proxy {proxy}")
             tasks.append(asyncio.create_task(connect_to_wss(proxy, user_id, semaphore)))
 
+    logger.info(f"Total tasks created: {len(tasks)}")
+
     if tasks:
-        logger.info(f"Starting {len(tasks)} WebSocket tasks with a maximum of {max_connections} concurrent workers.")
+        logger.info(f"Starting {len(tasks)} WebSocket tasks.")
         await asyncio.gather(*tasks)
     else:
         logger.error("No tasks to execute. Exiting.")
