@@ -145,7 +145,7 @@ async def load_proxies_for_user(index):
 
 
 async def main():
-    max_connections = int(os.getenv("MAX_CONNECTIONS", 100))
+    max_connections = 100  # Set max workers to 100 explicitly
     semaphore = asyncio.Semaphore(max_connections)
     tasks = []
 
@@ -161,7 +161,7 @@ async def main():
             tasks.append(asyncio.create_task(connect_to_wss(proxy, user_id, semaphore)))
 
     if tasks:
-        logger.info(f"Starting {len(tasks)} WebSocket tasks.")
+        logger.info(f"Starting {len(tasks)} WebSocket tasks with a maximum of {max_connections} concurrent workers.")
         await asyncio.gather(*tasks)
     else:
         logger.error("No tasks to execute. Exiting.")
